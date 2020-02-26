@@ -76,6 +76,12 @@
 #include "windows.h"
 #endif /* ODPLAT_WIN32 */
 
+#ifdef DJGPP
+#include <dir.h>
+#include <unistd.h>
+#include <dpmi.h>
+#include <dos.h>
+#endif
 
 /* Multitasker type, only availvable under DOS. */
 #ifdef ODPLAT_DOS
@@ -100,29 +106,74 @@ void ODPlatInit(void)
    /* determine what multitasker we are running under.                */
 
    /* Check whether running under OS/2. */
+#ifdef DJGPP
+	union REGS regs;
+
+printf("trying OS2\n");
+
+	memset(&regs, 0, sizeof(regs));
+	regs.h.ah = 0x30;
+	int86(0x21, &regs, &regs);
+	
+	if(regs.h.al < 0x0a)
+		goto NoOS2;
+#else
    ASM       mov ah, 0x30
    ASM       int 0x21
    ASM       cmp al, 0x0a
    ASM       jl  NoOS2
-
+#endif
    /* If we get to this point, then OS/2 has been detected. */
    ODMultitasker = kMultitaskerOS2;
    return;
 
 NoOS2:
    /* Check whether we are running under DesqView. */
+#ifdef DJGPP
+	memset(&regs, 0, sizeof(regs));
+printf("trying dv\n");	
+	regs.x.cx = 0x4445;
+	regs.x.dx = 0x5351;
+	regs.x.ax = 0x2b01;
+	
+	int86(0x21, &regs, &regs);
+	
+	if(regs.h.al == 0xff)
+		goto NoDesqView;
+#else
    ASM    mov cx, 0x4445
    ASM    mov dx, 0x5351
    ASM    mov ax, 0x2b01
    ASM    int 0x21
    ASM    cmp al, 0xff
    ASM    je NoDesqView
-
+#endif
    /* If we get to this point, then DesqView has been detected. */
    ODMultitasker = kMultitaskerDV;
-
+   return;
 NoDesqView:
    /* Check whether we are running under Windows. */
+#ifdef DJGPP
+/*
+	memset(&regs, 0, sizeof(regs));
+	
+	regs.x.ax = 0x1600;
+	int86(0x2f, &regs, &regs);
+	
+	if(regs.h.al == 0x00 || regs.h.al == 0x80)
+*/
+	{
+		printf("trying windows\n");
+		__dpmi_regs r;
+		memset(&r, 0, sizeof(r));
+		r.x.ax = 0x1600;
+		__dpmi_int(0x2f, &r);
+	
+	if(r.h.al == 0x00 || r.h.al == 0x80)
+		goto NoWindows;
+	}
+	
+#else
    ASM    push di
    ASM    push si
    ASM    mov ax, 0x1600
@@ -133,13 +184,15 @@ NoDesqView:
    ASM    je NoWindows
    ASM    cmp al, 0x80
    ASM    je NoWindows
-
+#endif
     /* If we get to this point, then Windows has been detected. */
    ODMultitasker = kMultitaskerWin;
-
+   return;
 NoWindows:
+od_printf("no multitasker\n");
    ODMultitasker = kMultitaskerNone;
 #endif /* ODPLAT_DOS */
+delay(5000);
 }
 
 
@@ -159,18 +212,50 @@ static void ODPlatYield(void)
    switch(ODMultitasker)
    {
       case kMultitaskerDV:
-         ASM  mov ax, 0x1000
-         ASM  int 0x15
+#ifdef DJGPP
+	{
+		union REGS regs;
+		memset(&regs, 0, sizeof(regs));
+		
+		regs.x.ax = 0x1000;
+		int86(0x15, &regs, &regs);
+	}
+#else
+		ASM  mov ax, 0x1000
+		ASM  int 0x15
+#endif
          break;
 
       case kMultitaskerWin:
+#ifdef DJGPP
+	{
+		/*
+		union REGS regs;
+		memset(&regs, 0, sizeof(regs));
+		
+		regs.x.ax = 0x1680;
+		int86(0x2f, &regs, &regs);
+		*/
+		__dpmi_yield();
+	}
+#else
          ASM  mov ax, 0x1680
          ASM  int 0x2f
+#endif
          break;
 
       case kMultitaskerOS2:
       default:
+#ifdef DJGPP
+	{
+		union REGS regs;
+		memset(&regs, 0, sizeof(regs));
+		
+		int86(0x28, &regs, &regs);
+	}
+#else
          ASM  int 0x28
+#endif
    }
 }
 #endif /* ODPLAT_DOS */
@@ -1182,7 +1267,18 @@ static int ODDirDOSFindFirst(CONST char *pszPath, tDOSDirEntry *pBlock,
 
    ASSERT(pszPath != NULL);
    ASSERT(pBlock != NULL);
-
+#ifdef DJGPP
+	struct ffblk block;
+	nToReturn = findfirst(pszPath, &block, wAttributes);
+	if(!nToReturn)
+	{
+		strcpy(pBlock->szFileName, block.ff_name);
+		pBlock->btAttrib = block.ff_attrib;
+		pBlock->wFileTime = block.ff_ftime;
+		pBlock->wFileDate = block.ff_fdate;
+		pBlock->dwFileSize = block.ff_fsize;
+	}
+#else
    ASM     push ds
    ASM     mov ah, 0x2f            /* Int 0x21, ah=0x2f: Get current DOS DTA */
    ASM     int 0x21                                       /* Get current DTA */
@@ -1214,6 +1310,7 @@ after_result:
    ASM     pop dx                      /* Pop original DTA offest from stack */
    ASM     int 0x21                             /* Reset DOS DTA to original */
    ASM     pop ds                   /* Restore DS stored at function startup */
+#endif
    return(nToReturn);
 }
 
@@ -1235,7 +1332,18 @@ static int ODDirDOSFindNext(tDOSDirEntry *pBlock)
    int nToReturn;
 
    ASSERT(pBlock != NULL);
-
+#ifdef DJGPP
+	struct ffblk block;
+	nToReturn = findnext(&block);
+	if(!nToReturn)
+	{
+		strcpy(pBlock->szFileName, block.ff_name);
+		pBlock->btAttrib = block.ff_attrib;
+		pBlock->wFileTime = block.ff_ftime;
+		pBlock->wFileDate = block.ff_fdate;
+		pBlock->dwFileSize = block.ff_fsize;
+	}
+#else
    ASM     push ds                                                /* Save DS */
    ASM     mov ah, 0x2f            /* Int 0x21, ah=0x2f: Get current DOS DTA */
    ASM     int 0x21                                       /* Get current DTA */
@@ -1261,6 +1369,7 @@ after_result:
    ASM     pop dx                      /* Pop original DTA offest from stack */
    ASM     int 0x21                             /* Reset DOS DTA to original */
    ASM     pop ds                   /* Restore DS stored at function startup */
+#endif
    return(nToReturn);
 }
 
@@ -1329,6 +1438,9 @@ static BOOL ODDirWinMatchesAttributes(tODDirInfo *pDirInfo)
 void ODDirChangeCurrent(char *pszPath)
 {
 #ifdef ODPLAT_DOS
+#ifdef DJGPP
+	chdir(pszPath);
+#else
    int nDrive = 0;
 
    if(pszPath[1] == ':')
@@ -1337,6 +1449,7 @@ void ODDirChangeCurrent(char *pszPath)
    }
 
    _setdrvcd(nDrive, (char *)pszPath);
+#endif 
 #endif /* ODPLAT_DOS */
 
 #ifdef ODPLAT_WIN32
@@ -1368,11 +1481,15 @@ void ODDirGetCurrent(char *pszPath, INT nMaxPathChars)
    ASSERT(nMaxPathChars > 0);
 
 #ifdef ODPLAT_DOS
+#ifdef DJGPP
+	getcwd(pszPath, nMaxPathChars);
+#else
    UNUSED(nMaxPathChars);
 
    strcpy(pszPath, "X:\\");
    pszPath[0] = 'A' + _getdrv();
    _getcd(0, (char *)pszPath + 3);
+#endif 
 #endif /* ODPLAT_DOS */
 
 #ifdef ODPLAT_WIN32
@@ -1402,6 +1519,7 @@ void ODDirGetCurrent(char *pszPath, INT nMaxPathChars)
  */
 tODResult ODFileDelete(CONST char *pszPath)
 {
+#ifndef DJGPP
 #ifdef ODPLAT_DOS
    {
       tODResult Result;
@@ -1423,16 +1541,16 @@ Failure:
       ASM    mov word ptr Result, kODRCGeneralFailure
 Done:
       ASM    pop ds
-
       return(Result);
    }
 #endif /* ODPLAT_DOS */
+#endif /* DJGPP */
 
 #ifdef ODPLAT_WIN32
    return(DeleteFile(pszPath) ? kODRCSuccess : kODRCGeneralFailure);
 #endif /* ODPLAT_WIN32 */
 
-#ifdef ODPLAT_NIX
+#if defined(ODPLAT_NIX) || defined(DJGPP)
    return(unlink(pszPath));
 #endif
 }
@@ -1469,7 +1587,9 @@ BOOL ODFileAccessMode(char *pszFilename, int nAccessMode)
       if(nAccessMode == 0)
       {
           int to_return = FALSE;
-
+#ifdef DJGPP
+		return access(pszFilename, F_OK);
+#else
 #ifdef LARGEDATA
          ASM push ds
          ASM lds dx, pszFilename
@@ -1484,6 +1604,7 @@ done:
 #ifdef LARGEDATA
          ASM pop ds
 #endif
+#endif /* DJGPP */
           return(to_return);
       }
       else

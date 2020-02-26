@@ -91,6 +91,9 @@
 #include "ODFrame.h"
 #endif /* ODPLAT_WIN32 */
 
+#ifdef DJGPP
+#include <bios.h>
+#endif
 
 /* Multithreading performance tuning. */
 #define REMOTE_INPUT_THREAD_PRIORITY      OD_PRIORITY_NORMAL /* was ABOVE_NORMAL */
@@ -424,6 +427,13 @@ check_keyboard_again:
       goto after_key_check;
    }
 
+#ifdef DJGPP
+	if(!bioskey(1))
+		goto after_key_check;
+	
+	wKey = bioskey(0);
+	btShiftStatus = bioskey(2);
+#else
    ASM    mov ah, 1
    ASM    push si
    ASM    push di
@@ -441,7 +451,7 @@ key_waiting:
    ASM    mov btShiftStatus, al
    ASM    pop di
    ASM    pop si
-
+#endif
       if(nArrowUseCount > 0 && (wKey == 0x4800 || wKey == 0x5000)
          && !(btShiftStatus & 2))
       {

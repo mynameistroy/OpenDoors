@@ -86,6 +86,10 @@
 #define DIRSEP_STR	"\\"
 
 /* OpenDoors target platform. */
+#if defined(DJGPP)
+#pragma message("Compiling for DJGPP/DOS version of OpenDoors")
+#define ODPLAT_DOS
+#else
 #if defined(WIN32) || defined(__WIN32__) || defined(_WIN32)
 #define ODPLAT_WIN32
 #undef ODPLAT_DOS
@@ -109,7 +113,7 @@
 #pragma message("Compiling for DOS version of OpenDoors")
 #endif /* !NIX */
 #endif /* !WIN32 */
-
+#endif /* !DJGPP */
 
 /* Include any other headers required by OpenDoor.h. */
 #ifdef ODPLAT_WIN32 
@@ -165,7 +169,7 @@
 #endif /* !BUILDING_OPENDOORS */
 
 /* Explicitly far pointers. */
-#ifdef ODPLAT_DOS
+#if defined(ODPLAT_DOS) && !defined(DJGPP)
 #define ODFAR far
 #else /* !ODPLAT_DOS */
 #define ODFAR

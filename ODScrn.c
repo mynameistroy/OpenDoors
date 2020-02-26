@@ -78,6 +78,11 @@
 #include "ODRes.h"
 #endif /* ODPLAT_WIN32 */
 
+#ifdef DJGPP
+#include <pc.h>
+#include <conio.h>
+#include <dos.h>
+#endif
 
 /* ========================================================================= */
 /* Definitions of variables used by the local screen module.                 */
@@ -891,7 +896,7 @@ tODResult ODScrnStartWindow(HANDLE hInstance, tODThreadHandle *phScreenThread,
  *
  * Parameters: none
  *
- *     Return: void
+ *     Return: 
  */
 void ODScrnSetFocusToWindow(void)
 {
@@ -926,7 +931,46 @@ static void ODScrnSetWinCaretPos(void)
 
 #endif /* ODPLAT_WIN32 */
 
+#ifdef DJGPP
+/* ----------------------------------------------------------------------------
+ * ODScrnInvalidate()                                  *** PRIVATE FUNCTION ***
+ *
+ * Copies the pScrnBuffer from DPMI address space to DOS address space
+ * 
+ *
+ * Parameters: none
+ *
+ *     Return: void.
+ */
+ void ODScrnInvalidate(void)
+ {
+	 if(od_control.od_silent_mode)
+		 return;
+	 
+	 ScreenUpdate(pScrnBuffer);
+ }
 
+/* ----------------------------------------------------------------------------
+ * ODScrnInvalidateLine()                              *** PRIVATE FUNCTION ***
+ *
+ * Copies the line buffer from DPMI address space to DOS 1M address space
+ * 
+ *
+ * Parameters: pLineBuffer			- pointer to line buffer to copy
+ *
+ *			   wLine                - screen line to copy buffer overtop
+ 
+ *     Return: void.
+ */
+ void ODScrnInvalidateLine(void *pLineBuffer, WORD wLine)
+ {
+	  if(od_control.od_silent_mode)
+		 return;
+	 
+	 ScreenUpdateLine(pLineBuffer, wLine);
+ }
+
+#endif
 
 /* ========================================================================= */
 /* Functions used throughout OpenDoors to manipulate local screen buffer.    */
@@ -945,6 +989,40 @@ tODResult ODScrnInitialize(void)
 {
    BOOL bClear = TRUE;
 
+#ifdef DJGPP
+	/* Allocate memory for screen buffer. */
+      pAllocatedBufferMemory = malloc(SCREEN_BUFFER_SIZE);
+
+      if(pAllocatedBufferMemory == NULL)
+      {
+         return(kODRCNoMemory);
+      }
+
+      /* Set the screen buffer far pointer to point to the allocated */
+      /* buffer.                                                     */
+      pScrnBuffer = pAllocatedBufferMemory;
+	  
+   if(!od_control.od_silent_mode)
+   {
+		WORD wDisplayMode;
+		
+		/* Get current video mode. */
+		wDisplayMode = ScreenMode();
+		
+		switch(wDisplayMode)
+		{
+			/* No need to change mode, already colour 80x25. */
+			case 0x2:
+			case 0x3:
+			case 0x7:
+				bClear = TRUE;
+			
+			default:
+			/* Must change mode to 80x25. */
+				_set_screen_lines(25);
+		}
+   }
+#else
 #if defined(ODPLAT_DOS) || defined(ODPLAT_NIX)
    /* In silent mode, we perform all output in a block of memory that is */
    /* never displayed.                                                   */
@@ -1062,6 +1140,7 @@ tODResult ODScrnInitialize(void)
    }
 #endif /* ODPLAT_DOS */
 #endif /* ODPLAT_DOS/NIX */
+#endif /* DJGPP */
 
 #ifdef ODPLAT_WIN32
    /* Allocate memory for screen buffer. */
@@ -1117,14 +1196,14 @@ void ODScrnShutdown(void)
 #else /* !ODPLAT_WIN32 */
    /* In silent mode, we must deallocate screen buffer memory. */
    /* *nix is always in silent mode                            */
-#ifndef ODPLAT_NIX
+#if !defined(ODPLAT_NIX) || !defined(DJGPP)
    if(od_control.od_silent_mode && pAllocatedBufferMemory != NULL)
    {
 #endif
       free(pAllocatedBufferMemory);
       pAllocatedBufferMemory = NULL;
       pScrnBuffer = NULL;
-#ifndef ODPLAT_NIX
+#if !defined(ODPLAT_NIX) || !defined(DJGPP)
    }
 #endif
 #endif
@@ -1272,6 +1351,9 @@ void ODScrnEnableCaret(BOOL bEnable)
 
    bCaretOn = bEnable;
 
+#ifdef DJGPP
+	_setcursortype(_NORMALCURSOR);
+#else
    /* Execute the cursor on / off primitive. */
    ASM    push si
    ASM    push di
@@ -1302,7 +1384,7 @@ set_cursor:
    ASM    int 0x10
    ASM    pop di
    ASM    pop si
-
+#endif
 
    if(bCaretOn)
    {
@@ -1311,6 +1393,9 @@ set_cursor:
    }
    else
    {
+#ifdef DJGPP
+		_setcursortype(_NOCURSOR);
+#else
       /* Turn off the local caret. */
       ASM    mov ah, 0x02
       ASM    mov bh, btDisplayPage
@@ -1321,6 +1406,7 @@ set_cursor:
       ASM    int 0x10
       ASM    pop di
       ASM    pop si
+#endif
    }
 #endif /* ODPLAT_DOS */
 }
@@ -1461,11 +1547,17 @@ void ODScrnDisplayChar(unsigned char chToOutput)
          /* If bell. */
          if(!od_control.od_silent_mode)
          {
+#ifdef DJGPP
+			sound(1000);
+			delay(500);
+			nosound();
+#else
 #ifdef ODPLAT_DOS
             ASM    mov ah, 0x02
             ASM    mov dl, 7
             ASM    int 0x21
 #endif /* ODPLAT_DOS */
+#endif
 #ifdef ODPLAT_WIN32
             MessageBeep(0xffffffff);
 #endif /* ODPLAT_WIN32 */
@@ -1484,6 +1576,9 @@ void ODScrnDisplayChar(unsigned char chToOutput)
          ASSERT(pbtDest >= (BYTE ODFAR *)pScrnBuffer);
          ASSERT(pbtDest < (BYTE ODFAR *)pScrnBuffer + SCREEN_BUFFER_SIZE);
 
+#ifdef DJGPP
+		ODScrnInvalidate();
+#endif
 #ifdef ODPLAT_WIN32
          /* Force the updated area of the screen window to be redrawn. */
          ODScrnInvalidate((BYTE)(btCursorColumn + btLeftBoundary),
@@ -1530,7 +1625,10 @@ static void ODScrnGetCursorPos(void)
 {
 #ifdef ODPLAT_DOS
    if(!bCaretOn) return;
-
+#ifdef DJGPP
+	btCursorRow = (BYTE)wherey();
+	btCursorColumn = (BYTE)wherex();
+#else
    ASM    mov ah, 0x03
    ASM    mov bh, btDisplayPage
    ASM    push si
@@ -1542,8 +1640,10 @@ static void ODScrnGetCursorPos(void)
    ASM    mov btCursorRow, dh
    ASM    sub dl, btLeftBoundary
    ASM    mov btCursorColumn, dl
+#endif /* DJGPP */
 #endif /* ODPLAT_DOS */
 }
+
 
 
 /* ----------------------------------------------------------------------------
@@ -1561,6 +1661,9 @@ static void ODScrnUpdateCaretPos(void)
 #ifdef ODPLAT_DOS
    if(!bCaretOn) return;
 
+#ifdef DJGPP
+	gotoxy((int)btCursorColumn, (int)btCursorRow);
+#else
    /* Update position of flashing cursor on screen */
    ASM    mov ah, 0x02
    ASM    mov bh, btDisplayPage
@@ -1573,6 +1676,7 @@ static void ODScrnUpdateCaretPos(void)
    ASM    int 0x10
    ASM    pop di
    ASM    pop si
+#endif
 #endif /* ODPLAT_DOS */
 
 #ifdef ODPLAT_WIN32
@@ -1629,6 +1733,10 @@ void ODScrnClear(void)
    ODScrnInvalidate(btLeftBoundary, btTopBoundary, btRightBoundary,
       btBottomBoundary);
 #endif /* ODPLAT_WIN32 */
+
+#ifdef DJGPP
+	ODScrnInvalidate();
+#endif
 }
 
 
@@ -1656,6 +1764,10 @@ static void ODScrnScrollUpAndInvalidate(void)
       ODScrnInvalidate(btLeftBoundary, btTopBoundary, btRightBoundary,
          btBottomBoundary);
 #endif /* ODPLAT_WIN32 */
+
+#ifdef DJGPP
+		ODScrnInvalidate();
+#endif
    }
 }
 
@@ -1839,6 +1951,9 @@ BOOL ODScrnPutText(BYTE btLeft, BYTE btTop, BYTE btRight, BYTE btBottom,
       (BYTE)(btBottomBoundary + btBottom));
 #endif /* ODPLAT_WIN32 */
 
+#ifdef DJGPP
+	ODScrnInvalidate();
+#endif
    return(TRUE);
 }
 
@@ -1952,11 +2067,18 @@ void ODScrnDisplayBuffer(const char *pBuffer, INT nCharsToDisplay)
             /* If bell */
             if(!od_control.od_silent_mode)
             {
+#ifdef DJGPP
+				sound(1000);
+				delay(500);
+				nosound();
+#else
 #ifdef ODPLAT_DOS
                ASM    mov ah, 0x02
                ASM    mov dl, 7
                ASM    int 0x21
 #endif /* ODPLAT_DOS */
+#endif 
+
 #ifdef ODPLAT_WIN32
                MessageBeep(0xffffffff);
 #endif /* ODPLAT_WIN32 */
@@ -2080,6 +2202,10 @@ void ODScrnDisplayBuffer(const char *pBuffer, INT nCharsToDisplay)
          btBottomMost);
    }
 #endif /* ODPLAT_WIN32 */
+
+#ifdef DJGPP
+	ODScrnInvalidate();
+#endif
 }
 
 
@@ -2186,6 +2312,10 @@ void ODScrnClearToEndOfLine(void)
       (BYTE)(btTopBoundary + btCursorRow), btRightBoundary,
       (BYTE)(btTopBoundary + btCursorRow));
 #endif /* ODPLAT_WIN32 */
+
+#ifdef DJGPP
+	ODScrnInvalidate();
+#endif
 }
 
 

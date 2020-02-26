@@ -56,6 +56,9 @@
 #include <errno.h>
 
 #include "OpenDoor.h"
+#ifdef DJGPP
+#include <process.h>
+#endif
 #ifdef ODPLAT_NIX
 #include <signal.h>
 #include <sys/types.h>
@@ -341,9 +344,14 @@ ODAPIDEF INT16 ODCALL od_spawnvpe(INT16 nModeFlag, char *pszPath,
    }
 
    /* Store current directory. */
+
+#ifdef DJGPP
+	getcwd(pszDir, 256);
+#else
    strcpy(pszDir, "X:\\");
    pszDir[0] = 'A' + (nDrive = _getdrv());
    _getcd(0, (char *)pszDir + 3);
+#endif
 #endif /* ODPLAT_DOS */
 
    /* Remember when spawned to program was executed. */
@@ -428,8 +436,11 @@ ODAPIDEF INT16 ODCALL od_spawnvpe(INT16 nModeFlag, char *pszPath,
    ODScrnSetAttribute(TextInfo.attribute);
    ODScrnSetCursorPos(TextInfo.curx, TextInfo.cury);
 
+#ifdef DJGPP
+	chdir(pszDir);
+#else
    _setdrvcd(nDrive, pszDir);
-
+#endif
    /* Free allocated space. */
    free(abtScreenBuffer);
    free(pszDir);
@@ -467,7 +478,9 @@ int _spawnvpe(int nModeFlag, char *pszPath, char *papszArgs[],
    char buf[80];
    int nReturnCode;
 
-
+#if DJGPP
+	return spawnvpe(nModeFlag, pszPath, papszArgs, papszEnviron);
+#else
    _swappath = (char *)(strlen(od_control.od_swapping_path) == 0 ? NULL 
       : (char *)od_control.od_swapping_path);
    _useems = od_control.od_swapping_noems;
@@ -511,9 +524,10 @@ int _spawnvpe(int nModeFlag, char *pszPath, char *papszArgs[],
       }
       if(*e=='\0') return(-1);
    }
+#endif /* DJGPP */
 }
 
-
+#ifndef DJGPP
 /* ----------------------------------------------------------------------------
  * addvect()                                           *** PRIVATE FUNCTION ***
  *
@@ -872,7 +886,7 @@ static int cmdenv(char **papszArgs, char **papszEnviron, char *command,
 
     return(( int )elen );          /* return environment length */
 }
-
+#endif /* DJGPP */
 
 /* ----------------------------------------------------------------------------
  * doxspawn()                                          *** PRIVATE FUNCTION ***
@@ -889,6 +903,9 @@ static int cmdenv(char **papszArgs, char **papszEnviron, char *command,
  */
 static int doxspawn(char *pszPath, char *papszArgs[], char *papszEnviron[])
 {
+#ifdef DJGPP
+	return spawnvpe(P_WAIT, pszPath, papszArgs, papszEnviron);
+#else
     int nReturnCode = 0;        /* assume do xspawn */
     int doswap = 0;            /* assume do swap */
     int elen;                  /* environment length */
@@ -977,6 +994,7 @@ static int doxspawn(char *pszPath, char *papszArgs[], char *papszEnviron[])
     free( mapbuf );
     free( memory );
     return( nReturnCode );
+#endif /* DJGPP */
 }
 
 
@@ -998,6 +1016,9 @@ static int doxspawn(char *pszPath, char *papszArgs[], char *papszEnviron[])
 int _spawnve(int nModeFlag, char *pszPath, char *papszArgs[],
    char * papszEnviron[])
 {
+#ifdef DJGPP
+	return spawnve(P_WAIT, pszPath, papszArgs, papszEnviron);
+#else
     char *p;
     char *s;
     int nReturnCode = -1;
@@ -1038,6 +1059,7 @@ int _spawnve(int nModeFlag, char *pszPath, char *papszArgs[],
     }
 
     return( nReturnCode );
+#endif /* DJGPP */
 }
 
 #endif /* ODPLAT_DOS */

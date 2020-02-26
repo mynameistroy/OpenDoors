@@ -897,7 +897,7 @@ ODAPIDEF void ODCALL od_set_statusline(INT nSetting)
 {
 #ifdef OD_TEXTMODE
    INT nDistance;
-   BYTE btCount
+   BYTE btCount;
 #endif /* OD_TEXTMODE */
 
    /* Log function entry if running in trace mode. */

@@ -73,6 +73,13 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #endif
+
+#ifdef ODPLAT_DJGPP
+#include <errno.h>
+#include <unistd.h>
+#include <dpmi.h>
+#endif
+
 #include "ODCore.h"
 #include "ODGen.h"
 #include "ODPlat.h"
@@ -101,7 +108,9 @@
 /* Serial I/O mechanisms supported under MS-DOS version. */
 #ifdef ODPLAT_DOS
 #define INCLUDE_FOSSIL_COM                      /* INT 14h FOSSIL-based I/O. */
+#ifndef DJGPP
 #define INCLUDE_UART_COM                   /* Internal interrupt driven I/O. */
+#endif
 #endif /* ODPLAT_DOS */
 
 /* Serial I/O mechanisms supported under Win32 version. */
@@ -198,8 +207,8 @@ typedef struct
 #ifdef INCLUDE_UART_COM
 
 /* Private function prototypes, used by internal UART async serial I/O. */
-static void ODComSetVect(BYTE btVector, void (INTERRUPT far *pfISR)(void));
-static void (INTERRUPT far *ODComGetVect(BYTE btVector))(void);
+static void ODComSetVect(BYTE btVector, void (INTERRUPT ODFAR *pfISR)(void));
+static void (INTERRUPT ODFAR *ODComGetVect(BYTE btVector))(void);
 static void INTERRUPT ODComInternalISR();
 static BOOL ODComInternalTXReady(void);
 static void ODComInternalResetRX(void);
@@ -351,12 +360,26 @@ static BOOL bStopTrans;                 /* Flag set to stop transmitting. */
  */
 static void ODComSetVect(BYTE btVector, void (INTERRUPT far *pfISR)(void))
 {
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  push %0\n"
+	  "  mov  $0x25, %%ah\n"
+	  "  mov  %1, %%al\n"
+	  "  lds  %2, %%dx\n"
+	  "  int  $0x21\n"
+	  "  pop  %0\n"
+	  :"=m"(ds)
+	  :"m"(btVector), "m"(pfISR)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
    ASM   push ds
    ASM   mov ah, 0x25
    ASM   mov al, btVector
    ASM   lds dx, pfISR
    ASM   int 0x21
    ASM   pop ds
+#endif
 }
 
 
@@ -1240,6 +1263,25 @@ tODResult ODComOpen(tPortHandle hPort)
       pPortInfo->Method == kComMethodUnspecified)
    {
       /* Attempt to open port with FOSSIL DRIVER. */
+#ifdef DJGPP
+		int result = 0;
+	__asm__ __volatile__ (
+	  "  push %%si\n"
+	  "  push %%di\n"
+	  "  mov  $0x4, %%ah\n"
+	  "  mov  %1, %%dx\n"
+	  "  mov  $0x0, %%bx\n"
+	  "  int  $0x14\n"
+	  "  pop  %%di\n"
+	  "  pop  %%si\n"
+	  "  mov %%ax, %0\n"
+	  :"=m"(result)
+	  :"m"(nPort)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+	if(result == 0x1954)
+		goto fossil;
+#else
       ASM    push si
       ASM    push di
       ASM    mov ah, 4
@@ -1250,6 +1292,7 @@ tODResult ODComOpen(tPortHandle hPort)
       ASM    pop si
       ASM    cmp ax, 6484
       ASM    je fossil
+#endif
       goto no_fossil;
 
 fossil:
@@ -1269,6 +1312,21 @@ fossil:
          btTemp = pPortInfo->btFlowControlSetting | 0xf0;
       }
 
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  push %%si\n"
+	  "  push %%di\n"
+	  "  mov  $0xf, %%ah\n"
+	  "  mov  %0, %%al\n"
+	  "  mov  %1, %%dx\n"
+	  "  int  $0x14\n"
+	  "  pop  %%di\n"
+	  "  pop  %%si\n"
+	  :
+	  :"m"(btTemp), "m"(nPort)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
       ASM    push si
       ASM    push di
       ASM    mov ah, 0x0f
@@ -1277,7 +1335,7 @@ fossil:
       ASM    int 20
       ASM    pop di
       ASM    pop si
-
+#endif
       /* If serial port speed is not to be set, then return now. */
       if(pPortInfo->lSpeed == SPEED_UNSPECIFIED)
       {
@@ -1328,6 +1386,21 @@ fossil:
       btTemp |= pPortInfo->btWordFormat;
 
       /* Initialize fossil driver. */
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  push %%si\n"
+	  "  push %%di\n"
+	  "  mov  %0, %%al\n"
+	  "  mov  $0x0, %%ah\n"
+	  "  mov  %1, %%dx\n"
+	  "  int  $0x14\n"
+	  "  pop  %%di\n"
+	  "  pop  %%si\n"
+	  :
+	  :"m"(btTemp), "m"(nPort)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
       ASM    push si
       ASM    push di
       ASM    mov al, btTemp
@@ -1336,7 +1409,7 @@ fossil:
       ASM    int 20
       ASM    pop di
       ASM    pop si
-
+#endif
       /* Set port state to open. */
       pPortInfo->bIsOpen = TRUE;
 
@@ -1418,6 +1491,25 @@ no_fossil:
          nI8259MasterEndOfIntRegAddr = 0x20;
       }
 
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  mov  %2, %%dx\n"
+	  "  in   %%dx, %%al\n"
+	  "  mov  %%al, %0\n"
+	  
+	  "  mov  %2, %%dx\n"
+	  "  mov  $0x0, %%al\n"
+	  "  out  %%al, %%dx\n"
+
+	  "  mov  %2, %%dx\n"
+	  "  in   %%dx, %%al\n"
+	  "  mov  %%al, %1\n"
+	  
+	  :"=m"(btOldIntEnableReg), "=m"(btTemp)
+	  :"m"(nIntEnableRegAddr)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
       /* Save original state of UART IER register. */
       ASM mov dx, nIntEnableRegAddr
       ASM in al, dx
@@ -1431,7 +1523,7 @@ no_fossil:
       ASM mov dx, nIntEnableRegAddr
       ASM in al, dx
       ASM mov btTemp, al
-
+#endif
       if (btTemp != 0)
       {
          return(kODRCNoUART);
@@ -1441,16 +1533,40 @@ no_fossil:
       if(btFlowControl & FLOW_RTSCTS)
       {
          /* Read modem status register. */
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  mov  %1, %%dx\n"
+	  "  in   %%dx, %%al\n"
+	  "  mov  %%al, %0\n"
+	  :"=m"(btTemp)
+	  :"m"(nModemStatusRegAddr)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
          ASM mov dx, nModemStatusRegAddr
          ASM in al, dx
          ASM mov btTemp, al
-
+#endif
          /* Enable transmission only if CTS is high. */
          bStopTrans = !(btTemp & CTS);
       }
 
       /* Save original PIC interrupt settings, and temporarily disable */
       /* interrupts on this IRQ line while we perform initialization.  */
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  cli\n"
+	  "  mov  %1, %%dx\n"
+	  "  in   %%dx, %%al\n"
+	  "  mov  %%al, %0\n"
+	  "  or   %2, %%al\n"
+	  "  out  %%al, %%dx\n"
+	  
+	  :"=m"(btI8259Mask)
+	  :"m"(nI8259MaskRegAddr), "m"(btI8259Bit)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
       ASM cli
 
       ASM mov dx, nI8259MaskRegAddr
@@ -1458,14 +1574,22 @@ no_fossil:
       ASM mov btI8259Mask, al
       ASM or  al, btI8259Bit
       ASM out dx, al
-
+#endif
       /* Initialize transmit and recieve buffers. */
       ODComInternalResetTX();
       ODComInternalResetRX();
 
       /* Re-enable interrupts. */
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	"sti\n"
+	:
+	:
+	:"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
       ASM sti
-
+#endif
       /* Save original interrupt vector. */
       pfOldISR = ODComGetVect(btIntVector);
 
@@ -1912,14 +2036,44 @@ tODResult ODComClose(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  $0x5, %%ah\n"
+		  "  mov  %0, %%dx\n"
+		  "  int  $0x14\n"
+		  :
+		  :"m"(nPort)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    mov ah, 5
          ASM    mov dx, nPort
          ASM    int 20
+#endif
          break;
 #endif /* INCLUDE_FOSSIL_COM */
 
 #ifdef INCLUDE_UART_COM
       case kComMethodUART:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  %1, %%dx\n"
+		  "  mov  %2, %%al\n"
+		  "  out  %%al, %%dx\n"
+		  "  mov  %3, %%dx\n"
+		  "  mov  %4, %%al\n"
+		  "  out  %%al, %%dx\n"
+		  
+		  "  cli\n"
+		  
+		  "  mov  %5, %%dx\n"
+		  "  in   %%dx, %%al\n"
+		  "  mov  %%al, %0\n"
+		  :"=m"(btTemp)
+		  :"m"(nModemCtrlRegAddr), "m"(btOldModemCtrlReg), "m"(nIntEnableRegAddr), "m"(btOldIntEnableReg), "m"(nI8259MaskRegAddr)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          /* Reset UART registers to their original values. */
          ASM mov dx, nModemCtrlRegAddr
          ASM mov al, btOldModemCtrlReg
@@ -1936,16 +2090,28 @@ tODResult ODComClose(tPortHandle hPort)
          ASM mov dx, nI8259MaskRegAddr
          ASM in al, dx
          ASM mov btTemp, al
-
+#endif
          btTemp = (btTemp  & ~btI8259Bit) | (btI8259Mask &  btI8259Bit);
 
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  %0, %%dx\n"
+		  "  mov  %1, %%al\n"
+		  "  out  %%al, %%dx\n"
+		  
+		  "  sti\n"
+		  :
+		  :"m"(nI8259MaskRegAddr), "m"(btTemp)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM mov dx, nI8259MaskRegAddr
          ASM mov al, btTemp
          ASM out dx, al
 
          /* Re-enable interrupts. */
          ASM sti
-
+#endif
          /* Reset vector to original interrupt handler. */
 #ifdef _MSC_VER
          ODComSetVect(btIntVector, (void far *)pfOldISR);
@@ -2032,13 +2198,24 @@ tODResult ODComCarrier(tPortHandle hPort, BOOL *pbIsCarrier)
       case kComMethodFOSSIL:
       {
          int to_return;
-
+#ifdef DJGPP
+	__asm__ __volatile__ (
+	  "  mov  $0x3, %%ah\n"
+	  "  mov  %1, %%dx\n"
+	  "  int  $0x14\n"
+	  "  and  $0x80, %%ax\n"
+	  "  mov  %%ax, %0\n"
+	  :"=m"(to_return)
+	  :"m"(nPort)
+	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+	);
+#else
          ASM    mov ah, 3
          ASM    mov dx, nPort
          ASM    int 20
          ASM    and ax, 128
          ASM    mov to_return, ax
-
+#endif
          *pbIsCarrier = to_return;
 
          break;
@@ -2050,9 +2227,20 @@ tODResult ODComCarrier(tPortHandle hPort, BOOL *pbIsCarrier)
       {
          BYTE btMSR;
 
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  %1, %%dx\n"
+		  "  in   %%dx, %%al\n"
+		  "  mov  %%al, %0\n"
+		  :"=m"(btMSR)
+		  :"m"(nModemStatusRegAddr)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM mov dx, nModemStatusRegAddr
          ASM in al, dx
          ASM mov btMSR, al
+#endif
 
          *pbIsCarrier = btMSR & RLSD;
          break;
@@ -2156,6 +2344,25 @@ tODResult ODComSetDTR(tPortHandle hPort, BOOL bHigh)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "    cmpb $0x0, %0\n"
+		  "    je   1f\n"
+		  "    mov  $0x1, %%al\n"
+		  "    jmp  2f\n"
+		  
+		  "1:  \n"
+		  "    xor  %%al, %%al\n"
+		  
+		  "2:  \n"
+		  "    mov  $0x6, %%ah\n"
+		  "    mov  %1, %%dx\n"
+		  "    int  $0x14\n"
+		  :"=m"(bHigh)
+		  :"m"(nPort)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    cmp byte ptr bHigh, 0
          ASM    je lower
          ASM    mov al, 1
@@ -2168,12 +2375,28 @@ set_dtr:
          ASM    mov ah, 6
          ASM    mov dx, nPort
          ASM    int 20
+#endif
 #endif /* INCLUDE_FOSSIL_COM */
 
 #ifdef INCLUDE_UART_COM
       case kComMethodUART:
          if(bHigh)
          {
+#ifdef DJGPP
+			__asm__ __volatile__ (
+			  "  cli\n"
+			  
+			  "  mov  %0, %%dx\n"
+			  "  in   %%dx, %%al\n"
+			  "  or   %1, %%al\n"
+			  "  out  %%al, %%dx\n"
+			  
+			  "  sti\n"
+			  :
+			  :"m"(nModemCtrlRegAddr), "m"(DTR)
+			  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+			);
+#else
             ASM cli
 
             ASM mov dx, nModemCtrlRegAddr
@@ -2182,9 +2405,25 @@ set_dtr:
             ASM out dx, al
 
             ASM sti
+#endif
          }
          else
          {
+#ifdef DJGPP
+			__asm__ __volatile__ (
+			  "  cli\n"
+			  
+			  "  mov  %0, %%dx\n"
+			  "  in   %%dx, %%al\n"
+			  "  or   %1, %%al\n"
+			  "  out  %%al, %%dx\n"
+			  
+			  "  sti\n"
+			  :
+			  :"m"(nModemCtrlRegAddr), "m"(NOT_DTR)
+			  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+			);
+#else
             ASM cli
 
             ASM mov dx, nModemCtrlRegAddr
@@ -2193,6 +2432,7 @@ set_dtr:
             ASM out dx, al
 
             ASM sti
+#endif
          }
          break;
 #endif /* INCLUDE_UART_COM */
@@ -2268,11 +2508,28 @@ tODResult ODComOutbound(tPortHandle hPort, int *pnOutboundWaiting)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
+#ifdef DJGPP
+		{
+		int retval = 0;
+		__asm__ __volatile__ (
+		  "  mov  $0x3, %%ah\n"
+		  "  mov  %0, %%dx\n"
+		  "  int  $0x14\n"
+		  "  mov  %1, %%ah\n"
+		  :
+		  :"m"(nPort), "m"(retval)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+		 if((retval & 0x40) == 0)
+			 goto still_sending;
+		}
+#else
          ASM    mov ah, 0x03
          ASM    mov dx, nPort
          ASM    int 20
          ASM    and ah, 0x40
          ASM    jz  still_sending
+#endif	 
          *pnOutboundWaiting = 0;
          break;
 
@@ -2360,9 +2617,20 @@ tODResult ODComClearOutbound(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  $0x9, %%ah\n"
+		  "  mov  %0, %%dx\n"
+		  "  int  $0x14\n"
+		  :
+		  :"m"(nPort)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    mov ah, 9
          ASM    mov dx, nPort
          ASM    int 20
+#endif
 #endif /* INCLUDE_FOSSIL_COM */
 
 #ifdef INCLUDE_UART_COM
@@ -2430,9 +2698,20 @@ tODResult ODComClearInbound(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  $0x10, %%ah\n"
+		  "  mov  %0, %%dx\n"
+		  "  int  $0x14\n"
+		  :
+		  :"m"(nPort)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    mov ah, 10
          ASM    mov dx, nPort
          ASM    int 20
+#endif
 #endif /* INCLUDE_FOSSIL_COM */
 
 #ifdef INCLUDE_UART_COM
@@ -2510,7 +2789,22 @@ tODResult ODComInbound(tPortHandle hPort, int *pnInboundWaiting)
       case kComMethodFOSSIL:
       {
          BOOL bDataInBuffer = FALSE;
-
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  $0x3, %%ah\n"
+		  "  mov  %1, %%dx\n"
+		  "  push %%si\n"
+		  "  push %%di\n"
+		  "  int  $0x14\n"
+		  "  pop  %%di\n"
+		  "  pop  %%si\n"
+		  "  and  $0x1, %%ah\n"
+		  "  mov  %%ah, %0\n"
+		  :"=m"(bDataInBuffer)
+		  :"m"(nPort)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    mov ah, 3
          ASM    mov dx, nPort
          ASM    push si
@@ -2520,7 +2814,7 @@ tODResult ODComInbound(tPortHandle hPort, int *pnInboundWaiting)
          ASM    pop si
          ASM    and ah, 1
          ASM    mov bDataInBuffer, ah
-
+#endif
          *pnInboundWaiting = bDataInBuffer ? SIZE_NON_ZERO : 0;
 
          break;
@@ -2641,7 +2935,21 @@ tODResult ODComGetByte(tPortHandle hPort, char *pbtNext, BOOL bWait)
             /* without obtaining any characters.                       */
             if(nInboundSize == 0) return(kODRCNothingWaiting);
          }
-
+#ifdef DJGPP
+__asm__ __volatile__ (
+  "  mov  $0x2, %%ah\n"
+  "  mov  %1, %%dx\n"
+  "  push %%si\n"
+  "  push %%di\n"
+  "  int  $0x14\n"
+  "  pop  %%di\n"
+  "  pop  %%si\n"
+  "  mov  %%al, %0\n"
+  :"=m"(btToReturn)
+  :"m"(nPort)
+  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+);
+#else
          ASM     mov ah, 2
          ASM     mov dx, nPort
          ASM     push si
@@ -2650,7 +2958,7 @@ tODResult ODComGetByte(tPortHandle hPort, char *pbtNext, BOOL bWait)
          ASM     pop di
          ASM     pop si
          ASM     mov btToReturn, al
-
+#endif
          *pbtNext = btToReturn;
 
          break;
@@ -2702,10 +3010,22 @@ tODResult ODComGetByte(tPortHandle hPort, char *pbtNext, BOOL bWait)
             if(btFlowControl & FLOW_RTSCTS)
             {
                /* If using RTS/CTS flow control, then raise RTS line. */
+#ifdef DJGPP
+				__asm__ __volatile__ (
+				  "  mov  %0, %%dx\n"
+				  "  in   %%dx, %%al\n"
+				  "  or   %1, %%al\n"
+				  "  out  %%al, %%dx\n"
+				  :
+				  :"m"(nModemCtrlRegAddr), "m"(RTS)
+				  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+				);
+#else
                ASM mov dx, nModemCtrlRegAddr
                ASM in al, dx
                ASM or al, RTS
                ASM out dx, al
+#endif
             }
          }
 
@@ -2868,13 +3188,31 @@ tODResult ODComSendByte(tPortHandle hPort, BYTE btToSend)
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
 try_again:
+#ifdef DJGPP
+		{
+		int retval = 0;
+		__asm__ __volatile__ (
+		  "  mov  $0xb, %%ah\n"
+		  "  mov  %0, %%dx\n"
+		  "  mov  %1, %%al\n"
+		  "  int  $0x14\n"
+		  "  mov  %2, %%ax\n"
+		  :
+		  :"m"(nPort), "m"(btToSend), "m"(retval)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+		
+		if(retval != 0)
+			goto keep_going;
+		}
+#else
          ASM    mov ah, 0x0b
          ASM    mov dx, nPort
          ASM    mov al, btToSend
          ASM    int 20
          ASM    cmp ax, 0
          ASM    jne keep_going
-
+#endif
          /* Call idle function, if any. */
          if(pPortInfo->pfIdleCallback != NULL)
          {
@@ -2900,8 +3238,11 @@ keep_going:
          }
 
          /* Disable interrupts. */
+#ifdef DJGPP
+		__asm__ __volatile__("cli");
+#else
          ASM cli
-
+#endif
          /* Place the character in the queue. */
          pbtTXQueue[nTXInIndex++] = btToSend;
 
@@ -2915,13 +3256,26 @@ keep_going:
          nTXChars++;
 
          /* Enable transmit interrupt on the UART. */
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  mov  %0, %%dx\n"
+		  "  in   %%dx, %%al\n"
+		  "  or   %1, %%al\n"
+		  "  out  %%al, %%dx\n"
+		  
+		  "  sti\n"
+		  :
+		  :"m"(nIntEnableRegAddr), "m"(THRE)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM mov dx, nIntEnableRegAddr
          ASM in al, dx
          ASM or al, THRE
          ASM out dx, al
 
          ASM sti
-
+#endif
          break;
 #endif /* INCLUDE_UART_COM */
 
@@ -3065,7 +3419,21 @@ tODResult ODComGetBuffer(tPortHandle hPort, BYTE *pbtBuffer, int nSize,
       case kComMethodFOSSIL:
       {
          int nReceived;
-
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  push %%di\n"
+		  "  mov  %1, %%cx\n"
+		  "  mov  %2, %%dx\n"
+		  "  les  %3, %%di\n"
+		  "  mov  $0x18, %%ah\n"
+		  "  int  $0x14\n"
+		  "  pop  %%di\n"
+		  "  mov  %%ax, %0\n"
+		  :"=m"(nReceived)
+		  :"m"(nSize), "m"(nPort), "m"(pbtBuffer)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    push di
          ASM    mov cx, nSize
          ASM    mov dx, nPort
@@ -3083,7 +3451,7 @@ tODResult ODComGetBuffer(tPortHandle hPort, BYTE *pbtBuffer, int nSize,
          ASM    int 20
          ASM    pop di
          ASM    mov nReceived, ax
-
+#endif
          *pnBytesRead = nReceived;
 
          break;
@@ -3275,6 +3643,21 @@ tODResult ODComSendBuffer(tPortHandle hPort, BYTE *pbtBuffer, int nSize)
          int nCount;
 
 try_again:
+#ifdef DJGPP
+		__asm__ __volatile__ (
+		  "  push %%di\n"
+		  "  mov  %1, %%cx\n"
+		  "  mov  %2, %%dx\n"
+		  "  les  %3, %%di\n"
+		  "  mov  $0x19, %%ah\n"
+		  "  int  $0x14\n"
+		  "  pop  %%di\n"
+		  "  mov  %%ax, %0\n"
+		  :"=m"(nCount)
+		  :"m"(nSize), "m"(nPort), "m"(pbtBuffer)
+		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+		);
+#else
          ASM    push di
          ASM    mov cx, nSize
          ASM    mov dx, nPort
@@ -3292,7 +3675,7 @@ try_again:
          ASM    int 20
          ASM    pop di
          ASM    mov nCount, ax
-
+#endif
          if(nCount<nSize)
          {
             /* Call idle function, if any. */
@@ -3324,7 +3707,11 @@ try_again:
          for(;;)
          {
             /* Disable interrupts. */
+#ifdef DJGPP
+			__asm__ __volatile__ ("cli");
+#else
             ASM cli
+#endif
 
             /* Try to transfer all of buffer if possible. */
             nTransferSize = nSize;
@@ -3387,6 +3774,18 @@ try_again:
             /* Update count of total characters in the queue. */
             nTXChars += nTransferSize;
 
+#ifdef DJGPP
+__asm__ __volatile__ (
+			  "  mov  %0, %%dx\n"
+			  "  in   %%dx, %%al\n"
+			  "  or   %1, %%al\n"
+			  "  out  %%al, %%dx\n"
+			  "  sti\n"
+			  :
+			  :"m"(nIntEnableRegAddr), "m"(THRE)
+			  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
+			);
+#else
             /* Enable transmit interrupt on the UART. */
             ASM mov dx, nIntEnableRegAddr
             ASM in al, dx
@@ -3395,7 +3794,7 @@ try_again:
 
             /* Re-enable interrupts. */
             ASM sti
-
+#endif
             /* Adjust count of characters left to transfer down by number of */
             /* characters transferred.                                       */
             nSize -= nTransferSize;
