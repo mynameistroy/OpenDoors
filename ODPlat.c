@@ -109,8 +109,6 @@ void ODPlatInit(void)
 #ifdef DJGPP
 	union REGS regs;
 
-printf("trying OS2\n");
-
 	memset(&regs, 0, sizeof(regs));
 	regs.h.ah = 0x30;
 	int86(0x21, &regs, &regs);
@@ -131,7 +129,6 @@ NoOS2:
    /* Check whether we are running under DesqView. */
 #ifdef DJGPP
 	memset(&regs, 0, sizeof(regs));
-printf("trying dv\n");	
 	regs.x.cx = 0x4445;
 	regs.x.dx = 0x5351;
 	regs.x.ax = 0x2b01;
@@ -154,25 +151,13 @@ printf("trying dv\n");
 NoDesqView:
    /* Check whether we are running under Windows. */
 #ifdef DJGPP
-/*
 	memset(&regs, 0, sizeof(regs));
 	
 	regs.x.ax = 0x1600;
 	int86(0x2f, &regs, &regs);
 	
 	if(regs.h.al == 0x00 || regs.h.al == 0x80)
-*/
-	{
-		printf("trying windows\n");
-		__dpmi_regs r;
-		memset(&r, 0, sizeof(r));
-		r.x.ax = 0x1600;
-		__dpmi_int(0x2f, &r);
-	
-	if(r.h.al == 0x00 || r.h.al == 0x80)
 		goto NoWindows;
-	}
-	
 #else
    ASM    push di
    ASM    push si
@@ -189,10 +174,8 @@ NoDesqView:
    ODMultitasker = kMultitaskerWin;
    return;
 NoWindows:
-od_printf("no multitasker\n");
    ODMultitasker = kMultitaskerNone;
 #endif /* ODPLAT_DOS */
-delay(5000);
 }
 
 
@@ -228,16 +211,7 @@ static void ODPlatYield(void)
 
       case kMultitaskerWin:
 #ifdef DJGPP
-	{
-		/*
-		union REGS regs;
-		memset(&regs, 0, sizeof(regs));
-		
-		regs.x.ax = 0x1680;
-		int86(0x2f, &regs, &regs);
-		*/
 		__dpmi_yield();
-	}
 #else
          ASM  mov ax, 0x1680
          ASM  int 0x2f

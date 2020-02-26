@@ -1626,8 +1626,8 @@ static void ODScrnGetCursorPos(void)
 #ifdef ODPLAT_DOS
    if(!bCaretOn) return;
 #ifdef DJGPP
-	btCursorRow = (BYTE)wherey();
-	btCursorColumn = (BYTE)wherex();
+	btCursorRow = (BYTE)wherey() - 1;
+	btCursorColumn = (BYTE)wherex() - 1;
 #else
    ASM    mov ah, 0x03
    ASM    mov bh, btDisplayPage
@@ -1662,7 +1662,7 @@ static void ODScrnUpdateCaretPos(void)
    if(!bCaretOn) return;
 
 #ifdef DJGPP
-	gotoxy((int)btCursorColumn, (int)btCursorRow);
+	gotoxy((int)btCursorColumn + 1, (int)btCursorRow + 1);
 #else
    /* Update position of flashing cursor on screen */
    ASM    mov ah, 0x02
