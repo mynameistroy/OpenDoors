@@ -89,6 +89,7 @@
 #if defined(DJGPP)
 #pragma message("Compiling for DJGPP/DOS version of OpenDoors")
 #define ODPLAT_DOS
+#define ODPLAT_DJGPP
 #else
 #if defined(WIN32) || defined(__WIN32__) || defined(_WIN32)
 #define ODPLAT_WIN32
@@ -169,7 +170,7 @@
 #endif /* !BUILDING_OPENDOORS */
 
 /* Explicitly far pointers. */
-#if defined(ODPLAT_DOS) && !defined(DJGPP)
+#if defined(ODPLAT_DOS) && !defined(ODPLAT_DJGPP)
 #define ODFAR far
 #else /* !ODPLAT_DOS */
 #define ODFAR

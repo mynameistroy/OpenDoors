@@ -78,6 +78,11 @@
 #include <errno.h>
 #include <unistd.h>
 #include <dpmi.h>
+#include <dos.h>
+#include <pc.h>
+#include <go32.h>
+#include <sys/movedata.h>
+#include <sys/types.h>
 #endif
 
 #include "ODCore.h"
@@ -108,7 +113,7 @@
 /* Serial I/O mechanisms supported under MS-DOS version. */
 #ifdef ODPLAT_DOS
 #define INCLUDE_FOSSIL_COM                      /* INT 14h FOSSIL-based I/O. */
-#ifndef DJGPP
+#ifndef ODPLAT_DJGPP
 #define INCLUDE_UART_COM                   /* Internal interrupt driven I/O. */
 #endif
 #endif /* ODPLAT_DOS */
@@ -360,7 +365,7 @@ static BOOL bStopTrans;                 /* Flag set to stop transmitting. */
  */
 static void ODComSetVect(BYTE btVector, void (INTERRUPT far *pfISR)(void))
 {
-#ifdef DJGPP
+#ifdef ODPLAT_DJGPP
 	__asm__ __volatile__ (
 	  "  push %0\n"
 	  "  mov  $0x25, %%ah\n"
@@ -1263,24 +1268,16 @@ tODResult ODComOpen(tPortHandle hPort)
       pPortInfo->Method == kComMethodUnspecified)
    {
       /* Attempt to open port with FOSSIL DRIVER. */
-#ifdef DJGPP
-		int result = 0;
-	__asm__ __volatile__ (
-	  "  push %%si\n"
-	  "  push %%di\n"
-	  "  mov  $0x4, %%ah\n"
-	  "  mov  %1, %%dx\n"
-	  "  mov  $0x0, %%bx\n"
-	  "  int  $0x14\n"
-	  "  pop  %%di\n"
-	  "  pop  %%si\n"
-	  "  mov %%ax, %0\n"
-	  :"=m"(result)
-	  :"m"(nPort)
-	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-	);
-	if(result == 0x1954)
-		goto fossil;
+#ifdef ODPLAT_DJGPP
+      union REGS regs = {0};
+      regs.h.ah = 4;
+      regs.w.dx = nPort;
+      regs.w.bx = 0;
+
+      int86(20, &regs, &regs);
+
+      if(regs.w.ax == 6484)
+		   goto fossil;
 #else
       ASM    push si
       ASM    push di
@@ -1312,20 +1309,14 @@ fossil:
          btTemp = pPortInfo->btFlowControlSetting | 0xf0;
       }
 
-#ifdef DJGPP
-	__asm__ __volatile__ (
-	  "  push %%si\n"
-	  "  push %%di\n"
-	  "  mov  $0xf, %%ah\n"
-	  "  mov  %0, %%al\n"
-	  "  mov  %1, %%dx\n"
-	  "  int  $0x14\n"
-	  "  pop  %%di\n"
-	  "  pop  %%si\n"
-	  :
-	  :"m"(btTemp), "m"(nPort)
-	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-	);
+#ifdef ODPLAT_DJGPP
+      memset(&regs, 0, sizeof(regs));
+
+      regs.h.ah = 0x0f;
+      regs.h.al = btTemp;
+      regs.w.dx = nPort;
+
+      int86(20, &regs, &regs);
 #else
       ASM    push si
       ASM    push di
@@ -1386,20 +1377,14 @@ fossil:
       btTemp |= pPortInfo->btWordFormat;
 
       /* Initialize fossil driver. */
-#ifdef DJGPP
-	__asm__ __volatile__ (
-	  "  push %%si\n"
-	  "  push %%di\n"
-	  "  mov  %0, %%al\n"
-	  "  mov  $0x0, %%ah\n"
-	  "  mov  %1, %%dx\n"
-	  "  int  $0x14\n"
-	  "  pop  %%di\n"
-	  "  pop  %%si\n"
-	  :
-	  :"m"(btTemp), "m"(nPort)
-	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-	);
+#ifdef ODPLAT_DJGPP
+      memset(&regs, 0, sizeof(regs));
+
+      regs.h.al = btTemp;
+      regs.h.ah = 0;
+      regs.w.dx = nPort;
+
+      int86(20, &regs, &regs);
 #else
       ASM    push si
       ASM    push di
@@ -1491,7 +1476,7 @@ no_fossil:
          nI8259MasterEndOfIntRegAddr = 0x20;
       }
 
-#ifdef DJGPP
+#ifdef ODPLAT_DJGPP
 	__asm__ __volatile__ (
 	  "  mov  %2, %%dx\n"
 	  "  in   %%dx, %%al\n"
@@ -1533,7 +1518,7 @@ no_fossil:
       if(btFlowControl & FLOW_RTSCTS)
       {
          /* Read modem status register. */
-#ifdef DJGPP
+#ifdef ODPLAT_DJGPP
 	__asm__ __volatile__ (
 	  "  mov  %1, %%dx\n"
 	  "  in   %%dx, %%al\n"
@@ -2036,15 +2021,14 @@ tODResult ODComClose(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  mov  $0x5, %%ah\n"
-		  "  mov  %0, %%dx\n"
-		  "  int  $0x14\n"
-		  :
-		  :"m"(nPort)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+      {
+         union REGS regs = {0};
+         regs.h.ah = 5;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+      }
 #else
          ASM    mov ah, 5
          ASM    mov dx, nPort
@@ -2198,17 +2182,14 @@ tODResult ODComCarrier(tPortHandle hPort, BOOL *pbIsCarrier)
       case kComMethodFOSSIL:
       {
          int to_return;
-#ifdef DJGPP
-	__asm__ __volatile__ (
-	  "  mov  $0x3, %%ah\n"
-	  "  mov  %1, %%dx\n"
-	  "  int  $0x14\n"
-	  "  and  $0x80, %%ax\n"
-	  "  mov  %%ax, %0\n"
-	  :"=m"(to_return)
-	  :"m"(nPort)
-	  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-	);
+#ifdef ODPLAT_DJGPP
+         union REGS regs = {0};
+         regs.h.ah = 3;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+
+         to_return = regs.w.ax & 128;
 #else
          ASM    mov ah, 3
          ASM    mov dx, nPort
@@ -2344,24 +2325,14 @@ tODResult ODComSetDTR(tPortHandle hPort, BOOL bHigh)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "    cmpb $0x0, %0\n"
-		  "    je   1f\n"
-		  "    mov  $0x1, %%al\n"
-		  "    jmp  2f\n"
-		  
-		  "1:  \n"
-		  "    xor  %%al, %%al\n"
-		  
-		  "2:  \n"
-		  "    mov  $0x6, %%ah\n"
-		  "    mov  %1, %%dx\n"
-		  "    int  $0x14\n"
-		  :"=m"(bHigh)
-		  :"m"(nPort)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+      {
+         union REGS regs = {0};
+         regs.h.al = bHigh;
+         regs.h.ah = 6;
+         regs.w.dx = nPort;
+         int86(20, &regs, &regs);         
+      }
 #else
          ASM    cmp byte ptr bHigh, 0
          ASM    je lower
@@ -2508,21 +2479,16 @@ tODResult ODComOutbound(tPortHandle hPort, int *pnOutboundWaiting)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
-#ifdef DJGPP
+#ifdef ODPLAT_DJGPP
 		{
-		int retval = 0;
-		__asm__ __volatile__ (
-		  "  mov  $0x3, %%ah\n"
-		  "  mov  %0, %%dx\n"
-		  "  int  $0x14\n"
-		  "  mov  %1, %%ah\n"
-		  :
-		  :"m"(nPort), "m"(retval)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
-		 if((retval & 0x40) == 0)
-			 goto still_sending;
-		}
+         union REGS regs = {0};
+         regs.h.ah = 0x03;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+         if((regs.h.ah & 0x40) == 0)
+            goto still_sending;
+      }
 #else
          ASM    mov ah, 0x03
          ASM    mov dx, nPort
@@ -2617,15 +2583,14 @@ tODResult ODComClearOutbound(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  mov  $0x9, %%ah\n"
-		  "  mov  %0, %%dx\n"
-		  "  int  $0x14\n"
-		  :
-		  :"m"(nPort)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+      {
+         union REGS regs = {0};
+         regs.h.ah = 9;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+      }
 #else
          ASM    mov ah, 9
          ASM    mov dx, nPort
@@ -2698,15 +2663,14 @@ tODResult ODComClearInbound(tPortHandle hPort)
    {
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  mov  $0x10, %%ah\n"
-		  "  mov  %0, %%dx\n"
-		  "  int  $0x14\n"
-		  :
-		  :"m"(nPort)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+      {
+         union REGS regs = {0};
+         regs.h.ah = 10;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+      }
 #else
          ASM    mov ah, 10
          ASM    mov dx, nPort
@@ -2790,20 +2754,13 @@ tODResult ODComInbound(tPortHandle hPort, int *pnInboundWaiting)
       {
          BOOL bDataInBuffer = FALSE;
 #ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  mov  $0x3, %%ah\n"
-		  "  mov  %1, %%dx\n"
-		  "  push %%si\n"
-		  "  push %%di\n"
-		  "  int  $0x14\n"
-		  "  pop  %%di\n"
-		  "  pop  %%si\n"
-		  "  and  $0x1, %%ah\n"
-		  "  mov  %%ah, %0\n"
-		  :"=m"(bDataInBuffer)
-		  :"m"(nPort)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+         union REGS regs = {0};
+         regs.h.ah = 3;
+         regs.w.dx = nPort;
+
+         int86(20, &regs, &regs);
+         regs.h.ah &= 1;
+         bDataInBuffer = regs.h.ah;
 #else
          ASM    mov ah, 3
          ASM    mov dx, nPort
@@ -2935,20 +2892,15 @@ tODResult ODComGetByte(tPortHandle hPort, char *pbtNext, BOOL bWait)
             /* without obtaining any characters.                       */
             if(nInboundSize == 0) return(kODRCNothingWaiting);
          }
-#ifdef DJGPP
-__asm__ __volatile__ (
-  "  mov  $0x2, %%ah\n"
-  "  mov  %1, %%dx\n"
-  "  push %%si\n"
-  "  push %%di\n"
-  "  int  $0x14\n"
-  "  pop  %%di\n"
-  "  pop  %%si\n"
-  "  mov  %%al, %0\n"
-  :"=m"(btToReturn)
-  :"m"(nPort)
-  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-);
+#ifdef ODPLAT_DJGPP
+         {
+            union REGS regs = {0};
+            regs.h.ah = 2;
+            regs.w.dx = nPort;
+
+            int86(20, &regs, &regs);
+            btToReturn = regs.h.al;
+         }
 #else
          ASM     mov ah, 2
          ASM     mov dx, nPort
@@ -3188,22 +3140,16 @@ tODResult ODComSendByte(tPortHandle hPort, BYTE btToSend)
 #ifdef INCLUDE_FOSSIL_COM
       case kComMethodFOSSIL:
 try_again:
-#ifdef DJGPP
+#ifdef ODPLAT_DJGPP
 		{
-		int retval = 0;
-		__asm__ __volatile__ (
-		  "  mov  $0xb, %%ah\n"
-		  "  mov  %0, %%dx\n"
-		  "  mov  %1, %%al\n"
-		  "  int  $0x14\n"
-		  "  mov  %2, %%ax\n"
-		  :
-		  :"m"(nPort), "m"(btToSend), "m"(retval)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
-		
-		if(retval != 0)
-			goto keep_going;
+         union REGS regs = {0};
+         regs.h.ah = 0x0b;
+         regs.w.dx = nPort;
+         regs.h.al = btToSend;
+
+         int86(20, &regs, &regs);
+         if(regs.w.ax != 0)
+            goto keep_going;
 		}
 #else
          ASM    mov ah, 0x0b
@@ -3419,20 +3365,17 @@ tODResult ODComGetBuffer(tPortHandle hPort, BYTE *pbtBuffer, int nSize,
       case kComMethodFOSSIL:
       {
          int nReceived;
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  push %%di\n"
-		  "  mov  %1, %%cx\n"
-		  "  mov  %2, %%dx\n"
-		  "  les  %3, %%di\n"
-		  "  mov  $0x18, %%ah\n"
-		  "  int  $0x14\n"
-		  "  pop  %%di\n"
-		  "  mov  %%ax, %0\n"
-		  :"=m"(nReceived)
-		  :"m"(nSize), "m"(nPort), "m"(pbtBuffer)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+         __dpmi_regs regs = {0};
+         regs.x.cx = nSize;
+         regs.x.dx = nPort;
+         regs.x.es = __tb >> 4;
+         regs.x.di = __tb & 0x0f;
+         regs.x.ax = 0x1800;
+
+         __dpmi_int(20, &regs);
+         nReceived = regs.x.ax;
+         dosmemget(__tb, nSize, pbtBuffer);
 #else
          ASM    push di
          ASM    mov cx, nSize
@@ -3643,20 +3586,20 @@ tODResult ODComSendBuffer(tPortHandle hPort, BYTE *pbtBuffer, int nSize)
          int nCount;
 
 try_again:
-#ifdef DJGPP
-		__asm__ __volatile__ (
-		  "  push %%di\n"
-		  "  mov  %1, %%cx\n"
-		  "  mov  %2, %%dx\n"
-		  "  les  %3, %%di\n"
-		  "  mov  $0x19, %%ah\n"
-		  "  int  $0x14\n"
-		  "  pop  %%di\n"
-		  "  mov  %%ax, %0\n"
-		  :"=m"(nCount)
-		  :"m"(nSize), "m"(nPort), "m"(pbtBuffer)
-		  :"memory", "esi", "edi", "eax", "ebx", "ecx", "edx"
-		);
+#ifdef ODPLAT_DJGPP
+         {
+            __dpmi_regs regs = {0};
+            regs.x.cx = nSize;
+            regs.x.dx = nPort;
+            regs.x.es = __tb >> 4;
+            regs.x.di = __tb & 0x0f;
+            regs.x.ax = 0x1900;
+
+            dosmemput(pbtBuffer, nSize, __tb);
+
+            __dpmi_int(20, &regs);
+            nCount = regs.x.ax;
+         }
 #else
          ASM    push di
          ASM    mov cx, nSize
